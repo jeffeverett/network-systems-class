@@ -1,0 +1,15 @@
+Make like so:
+make
+Run like so:
+./webproxy <port> <cache_timeout>
+
+Design Decisions:
+- All cached files are stored in the ./cached directory under their md5sum hash.
+- Cached addresses are stored at ./cached/cached_addresses.txt. This file
+has addresses separated by newlines and host/IP separated by commas.
+- blocked.txt contains all blocked hosts/IPs. Hosts go under <Hostnames> and IPs
+go under <IPs>. Newlines separate entries and control information; no extra newlines
+are allowed.
+- Forces no keep-alive by always manually responding with "Connection: close".
+
+Extra credit not completed.

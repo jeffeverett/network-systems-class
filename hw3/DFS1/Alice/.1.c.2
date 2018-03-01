@@ -1,0 +1,184 @@
+rts_detected[i][j] == 0)
+                complete = 0;
+        }
+
+        // add 1 to ignore leading .
+        if (complete)
+        {
+            printf("%s\n", files[i]+1);
+        }
+        else
+        {
+            printf("%s [incomplete]\n", files[i]+1);
+        }
+    }
+
+
+}
+
+void issue_put(char *file, char *subfolder)
+{
+    char command[strlen("md5sum ") + strlen(file) + 1];
+    strcpy(command, "md5sum ");
+    strcat(command, file);
+
+    FILE *pp = popen(command, "r");
+    if (!pp)
+    {
+        perror("Failed to run md5sum command");
+        return;
+    }
+
+    char hex_string[32];
+    size_t nbytes = fread(hex_string, 1, 32, pp);
+    if (nbytes < 32)
+    {
+        printf("Failed to read results of md5sum command.\n");
+        return;
+    }
+
+    // we consider all components of md5sum but reduce them to 32-bit representation using XOR
+    // note: the following was referenced while computing the below 6 lines
+    // https://stackoverflow.com/questions/11180028/converting-md5-result-into-an-integer-in-c
+    int part1, part2, part3, part4;
+    sscanf(&hex_string[0], "%x", &part1);
+    sscanf(&hex_string[8], "%x", &part2);
+    sscanf(&hex_string[16], "%x", &part3);
+    sscanf(&hex_string[24], "%x", &part4);
+    int hash = part1^part2^part3^part4;
+
+    int hash_index = hash % NUM_SERVERS;
+    if (hash_index < 0)
+        hash_index += NUM_SERVERS;
+
+
+    // split the file into four parts
+    FILE *fp = fopen(file, "r");
+    if (!fp)
+    {
+        printf("Failed to open file.\n");
+        return;
+    }
+    fseek(fp, 0L, SEEK_END);
+    long size = ftell(fp);
+    rewind(fp);
+
+    // use the following part size for first three pieces
+    // if there are extra bytes at end (up to 3), then
+    // last piece will have slightly extra
+    int part_sizes = size / NUM_SERVERS;
+    FILE *tmpfiles[NUM_SERVERS];
+    long file_sizes[NUM_SERVERS] = {0};
+    char buffer[BUFFER_SIZE];
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        tmpfiles[i] = tmpfile();
+        long num_to_read;
+        if (i == NUM_SERVERS-1)
+            num_to_read = BUFFER_SIZE-1;
+        else
+            num_to_read = min(BUFFER_SIZE-1, part_sizes*(i+1)-ftell(fp));
+        while ((nbytes = fread(buffer, 1, num_to_read, fp)) > 0)
+        {
+            file_sizes[i] += nbytes;
+            size_t nwritten = fwrite(buffer, 1, nbytes, tmpfiles[i]);
+            
+            if (i == NUM_SERVERS-1)
+                num_to_read = BUFFER_SIZE-1;
+            else
+                num_to_read = min(BUFFER_SIZE-1, part_sizes*(i+1)-ftell(fp));
+        }
+
+        rewind(tmpfiles[i]);
+    }
+
+    // upload these temp files to servers
+    char control_line[CONTROL_BYTES];
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        // create socket associated with this server
+        int sockfd = socket(PF_INET, SOCK_STREAM, 0);
+        if (!sockfd)
+        {
+            printf("Failed to create socket associated with server %s.\n", servers[i][0]);
+            return;
+        }
+
+        // make actual connections
+        socklen_t addrlen = sizeof(struct sockaddr);
+        int rc = connect(sockfd, (struct sockaddr *)&server_sa[i], addrlen);
+        if (rc == -1)
+        {
+            perror("Failed to connect to server");
+            printf("Server %s failed to connect. Will not PUT file when one or more servers is down.\n", servers[i][0]);
+            return;
+        }
+
+        // send first two lines of control info
+        send_authentication(sockfd);
+        strcpy(control_line, "put ");
+        strcat(control_line, file);
+        strcat(control_line, " ");
+        strcat(control_line, subfolder);
+        send(sockfd, control_line, CONTROL_BYTES, 0);
+
+        // send file parts
+        for (int j = 0; j < 2; j++)
+        {
+            int file_part = file_part_map[hash_index][i][j];
+            char file_part_s[10];
+            sprintf(file_part_s, "%d", file_part);
+
+            char file_size_s[10];
+            sprintf(file_size_s, "%ld", file_sizes[file_part-1]);
+            
+            // start with file part number and then number of bytes
+            strcpy(control_line, file_part_s);
+            strcat(control_line, " ");
+            strcat(control_line, file_size_s);
+
+            // send this control information
+            send(sockfd, control_line, CONTROL_BYTES, 0);
+
+            // and then send file contents
+            while ((nbytes = fread(buffer, 1, BUFFER_SIZE-1, tmpfiles[file_part-1])) > 0)
+            {
+                send(sockfd, buffer, nbytes, 0);
+            }
+            rewind(tmpfiles[file_part-1]);
+        }
+
+        if (error_present(sockfd, i))
+        {
+            printf("Cannot PUT when one or more servers fail.\n");
+            return;
+        }
+
+        close(sockfd);
+    }
+
+    // close temp files
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        fclose(tmpfiles[i]);
+    }
+
+    printf("Successfully uploaded file to servers.\n");
+}
+
+void issue_get(char *file, char *subfolder)
+{
+    // upload these temp files to servers
+    char buffer[BUFFER_SIZE];
+    char control_line[CONTROL_BYTES];
+    int nbytes;
+    int needed_parts[NUM_SERVERS];
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        needed_parts[i] = 1;
+    }
+    FILE *tmpfiles[NUM_SERVERS];
+    int has_all = 0;
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        // create socket associ

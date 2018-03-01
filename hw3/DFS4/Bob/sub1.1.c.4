@@ -1,0 +1,160 @@
+nable to open '%s'.\n", conf_file);
+        exit(1);
+    }
+
+    ssize_t read;
+    size_t len = 0;
+    while ((read = getline(&line, &len, fp)) != -1)
+    {
+        char *saveptr;
+        char *first_token = strtok_r(line, " :\n", &saveptr);
+        tolower_str(first_token);
+        if (strcmp(first_token, "server") == 0)
+        {
+            char *server_name = strtok_r(0, " :\n", &saveptr);
+            char *ip_addr = strtok_r(0, " :\n", &saveptr);
+            char *port_num = strtok_r(0, " :\n", &saveptr);
+
+            if (!server_name || !ip_addr || !port_num ||
+                strlen(server_name) >= MAX_SERVER_CHARS ||
+                strlen(ip_addr) >= MAX_SERVER_CHARS ||
+                strlen(port_num) >= MAX_SERVER_CHARS)
+            {
+                printf("Server line invalid.\n");
+                exit(1);
+            }
+
+            // copy information in string format for later printing
+            strcpy(servers[server_cnt][0], server_name);
+            strcat(servers[server_cnt][1], ip_addr);
+            strcat(servers[server_cnt][2], port_num);
+
+            // convert to sockaddr for later use
+            bzero(&server_sa[server_cnt], sizeof(server_sa[0]));
+            server_sa[server_cnt].sin_family = AF_INET;
+            server_sa[server_cnt].sin_port = htons(atoi(port_num));
+            server_sa[server_cnt].sin_addr.s_addr = inet_addr(ip_addr); 
+
+            server_cnt++;
+        }
+        else if (strcmp(first_token, "username") == 0)
+        {
+            char *conf_username = strtok_r(0, " :\n", &saveptr);
+            if (strlen(conf_username) >= MAX_USER_CHARS)
+            {
+                printf("Username line invalid.\n");
+                exit(1);
+            }
+            strcpy(username, conf_username);
+        }
+        else if (strcmp(first_token, "password") == 0)
+        {
+            char *conf_password = strtok_r(0, " :\n", &saveptr);
+            if (!conf_password || strlen(conf_password) >= MAX_USER_CHARS)
+            {
+                printf("Password line invalid.\n");
+                exit(1);
+            }
+            strcpy(password, conf_password);
+        }
+    }
+
+    if (server_cnt != NUM_SERVERS)
+    {
+        printf("Only read %d servers from conf file. Expected %d.\n", server_cnt, NUM_SERVERS);
+        exit(1);
+    }
+
+    if (strlen(username) == 0 || strlen(password) == 0)
+    {
+        printf("Authentication not fully specified. Username or password not read.\n");
+        exit(1);
+    }
+
+    // display read users and servers
+    printf("Read in the following servers and configuration from '%s':\n", conf_file);
+    for (int i = 0; i < server_cnt; i++)
+    {
+        printf("Server Name: %s, IP Address: %s, Port Number: %s\n", servers[i][0], servers[i][1], servers[i][2]);
+    }
+    printf("Username: %s, Password: %s\n", username, password);
+
+    // start reading in user inputs
+    printf("\nPlease enter a command ('LIST', 'GET <file>', 'PUT <file>', or 'MKDIR <dir>'):\n");
+    while ((read = getline(&line, &len, stdin)) != -1)
+    {
+        char *saveptr;
+        char *first_token = strtok_r(line, " \n", &saveptr);
+        if (!first_token)
+        {
+            printf("Please enter a command ('LIST', 'GET <file>', 'PUT <file>', or 'MKDIR <dir>'):\n");
+            continue;
+        }
+        tolower_str(first_token);
+
+        if (strcmp(first_token, "list") == 0)
+        {
+            char *subfolder = strtok_r(0, " \n", &saveptr);
+            if (!subfolder)
+            {
+                subfolder = "./";
+            }
+
+            issue_list(subfolder);
+        }
+        else if (strcmp(first_token, "get") == 0)
+        {
+            char *file = strtok_r(0, " \n", &saveptr);
+            char *subfolder = strtok_r(0, " \n", &saveptr);
+
+            if (!file)
+            {
+                printf("Must specify file to GET.\n");
+                printf("Please enter a command ('LIST', 'GET <file>', 'PUT <file>', or 'MKDIR <dir>'):\n");
+                continue;
+            }
+            if (!subfolder)
+            {
+                subfolder = "./";
+            }
+
+            issue_get(file, subfolder);
+        }
+        else if (strcmp(first_token, "put") == 0)
+        {
+            char *file = strtok_r(0, " \n", &saveptr);
+            char *subfolder = strtok_r(0, " \n", &saveptr);
+
+            if (!file)
+            {
+                printf("Must specify file to PUT.\n");
+                printf("Please enter a command ('LIST', 'GET <file>', 'PUT <file>', or 'MKDIR <dir>'):\n");
+                continue;
+            }
+            if (!subfolder)
+            {
+                subfolder = "./";
+            }
+
+            issue_put(file, subfolder);
+        }
+        else if (strcmp(first_token, "mkdir") == 0)
+        {
+            char *dirname = strtok_r(0, " \n", &saveptr);
+            if (!dirname)
+            {
+                printf("Must specify directory name.\n");
+                printf("Please enter a command ('LIST', 'GET <file>', 'PUT <file>', or 'MKDIR <dir>'):\n");
+                continue;
+            }
+            issue_mkdir(dirname);
+        }
+        else
+        {
+            printf("Command should be one of LIST, GET, PUT, or MKDIR.\n");
+        }
+
+        printf("Please enter a command ('LIST', 'GET <file>', 'PUT <file>', or 'MKDIR <dir>'):\n");
+    }
+    free(line);
+}

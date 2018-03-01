@@ -1,0 +1,22 @@
+Jeffrey Everett
+CSCI 4273
+10/22/2017
+Programming Assignment 2
+
+How to Compile Program:
+Simply enter directory and run "make".
+
+How to Run Program:
+Enter directory and run ./webserver.
+
+Configuration Details:
+- "ws.conf" should be configured to point to your desired directory and to use your desired port. These changes are made by changing "Listen" and "DocumentRoot".
+- Keep-Alive time is specified by "Keep-Alive" followed by an integer specifying the number of seconds to wait. This contrasts from the example "Keep-Alive time" because it is simpler to handle directives without spaces.
+
+What's Been Implemented:
+- Core requirements
+- Extra credit Keep-Alive behavior
+- Extra credit POST behavior
+
+Note:
+Sometimes the first series of requests to the server acts strange. Refreshing generally solves the issue.

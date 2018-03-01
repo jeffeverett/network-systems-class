@@ -1,0 +1,6 @@
+Blocked hosts:
+- www.perceptlearn.com
+- www.google.com
+Blocked IPs:
+- 1.0.0.1
+Shutdown signal received. Closing sockets and then exiting.

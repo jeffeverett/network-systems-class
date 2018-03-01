@@ -1,0 +1,198 @@
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <ctype.h>
+#include <unistd.h>
+#include <time.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define NUM_SERVERS 4
+#define MAX_FILES 30
+#define MAX_FILENAME 200
+#define MAX_USER_CHARS 100
+#define MAX_SERVER_CHARS 100
+#define BUFFER_SIZE 3000
+#define CONTROL_BYTES 250
+
+char username[MAX_USER_CHARS];
+char password[MAX_USER_CHARS];
+
+char servers[NUM_SERVERS][3][MAX_SERVER_CHARS];
+struct sockaddr_in server_sa[NUM_SERVERS];
+
+char file_part_map[NUM_SERVERS][NUM_SERVERS][2] = {{{1,2},{2,3},{3,4},{4,1}},
+                                                   {{4,1},{1,2},{2,3},{3,4}},
+                                                   {{3,4},{4,1},{1,2},{2,3}},
+                                                   {{2,3},{3,4},{4,1},{1,2}}};
+
+void tolower_str(char *str)
+{
+    for(int i = 0; str[i]; i++)
+        str[i] = tolower(str[i]);
+}
+
+long min(long a, long b)
+{
+    if (a < b)
+        return a;
+    return b;
+}
+
+int recv_timeout(int sockfd, int server_idx, char *buffer, int size)
+{
+    clock_t start = clock();
+    while ((clock()-start)/CLOCKS_PER_SEC<=1)
+    {
+        int nbytes = recv(sockfd, buffer, size, MSG_DONTWAIT);
+        if (nbytes > 0)
+            return nbytes;
+    }
+
+    printf("Timeout occurred for server %s.\n", servers[server_idx][0]);
+
+    return 0;
+}
+
+int error_present(int sockfd, int server_idx)
+{
+    char control_line[CONTROL_BYTES];
+    int nbytes = recv_timeout(sockfd, server_idx, control_line, CONTROL_BYTES);
+    if (!nbytes)
+        return 1;
+
+    char *saveptr;
+    char *status = strtok_r(control_line, "$", &saveptr);
+
+    if (strcmp(status, "error") == 0)
+    {
+        char *msg = strtok_r(0, "$", &saveptr);
+        printf("Error encountered in server %s: %s\n", servers[server_idx][0], msg);
+        return 1;
+    }
+    else if (strcmp(status, "done") == 0)
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+void send_authentication(int sockfd)
+{
+    char control_line[CONTROL_BYTES];
+    strcpy(control_line, username);
+    strcat(control_line, " ");
+    strcat(control_line, password);
+    send(sockfd, control_line, CONTROL_BYTES, 0);
+}
+
+void issue_list(char *subfolder)
+{
+    char buffer[BUFFER_SIZE];
+    char control_line[CONTROL_BYTES];
+    strcpy(control_line, "list");
+    strcat(control_line, " ");
+    strcat(control_line, subfolder);
+
+    char files[MAX_FILES][MAX_FILENAME];
+    char dirs[MAX_FILES][MAX_FILENAME];
+    int parts_detected[MAX_FILES][NUM_SERVERS] = {0};
+    int dirs_detected = 0;
+    int files_detected = 0;
+
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        // create socket associated with this server
+        int sockfd = socket(PF_INET, SOCK_STREAM, 0);
+        if (!sockfd)
+        {
+            printf("Failed to create socket associated with server %s.\n", servers[i][0]);
+            continue;
+        }
+
+        // make actual connections
+        socklen_t addrlen = sizeof(struct sockaddr);
+        int rc = connect(sockfd, (struct sockaddr *)&server_sa[i], addrlen);
+        if (rc == -1)
+        {
+            printf("Server %s failed to connect.\n", servers[i][0]);
+            continue;
+        }
+
+        send_authentication(sockfd);
+        int nbytes = send(sockfd, control_line, CONTROL_BYTES, 0);
+        if (error_present(sockfd, i))
+            continue;
+
+        // assume all output fits in buffer
+        recv_timeout(sockfd, i, buffer, BUFFER_SIZE-1);
+
+        char *saveptr;
+        char *file = strtok_r(buffer, "\n", &saveptr);
+        while (file != NULL)
+        {
+            char *part_s = strrchr(file, '.');
+            if (!part_s)
+            {
+                // this is a directory
+                int already_detected = 0;
+                for (int j = 0; j < dirs_detected; j++)
+                {
+                    if (strcmp(dirs[j], file) == 0)
+                    {
+                        already_detected = 1;
+                    }
+                }
+                if (!already_detected)
+                {
+                    strcpy(dirs[dirs_detected], file);
+                    dirs_detected++;
+                }
+            }
+            else
+            {
+                // this is a regular file
+                int part = strtol(part_s+1, 0, 10);
+                *part_s = '\0';
+
+                // determine if file is already in array
+                int already_detected = 0;
+                for (int j = 0; j < files_detected; j++)
+                {
+                    if (strcmp(files[j], file) == 0)
+                    {
+                        parts_detected[j][part-1] = 1;
+
+                        already_detected = 1;
+                    }
+                }
+                if (!already_detected)
+                {
+                    strcpy(files[files_detected], file);
+                    parts_detected[files_detected][part-1] = 1;
+
+                    files_detected++;
+                }
+            }
+
+            file = strtok_r(0, "\n", &saveptr);
+        }
+
+        close(sockfd);  
+    }
+
+    // list detected dirs
+    for (int i = 0; i < dirs_detected; i++)
+    {
+        printf("%s\n", dirs[i]);
+    }
+
+    // list detected files
+    for (int i = 0; i < files_detected; i++)
+    {
+        int complete = 1;
+        for (int j = 0; j < NUM_SERVERS; j++)
+        {
+            if (pa

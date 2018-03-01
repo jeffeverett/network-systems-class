@@ -1,0 +1,14 @@
+Running:
+DFS should be run with "./dfs <dir> <port>" (if directory does not already exist, may have to run with sudo privileges)
+DFC should be run with "./dfc <conf_file>"
+The following scripts have been provided for ease of use:
+- runservers.sh: runs 4 servers on dirs/ports matching those in conf file
+- killservers.sh: kills servers
+- cleardirs.sh: remove files/folder from server directories
+
+Design Decisions:
+DFC halts upload of "PUT" and "MKDIR" commands if one or more servers is down. This is to prevent having to replicate the established parts later.
+
+Extra Credits:
+- Subfolders implemented (subfolder should be specified without slash in MKDIR, and with slash in other commands, as in examples from assignment)
+- Traffic Optimization implemented

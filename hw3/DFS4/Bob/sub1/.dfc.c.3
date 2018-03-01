@@ -1,0 +1,179 @@
+  int sockfd = socket(PF_INET, SOCK_STREAM, 0);
+        if (!sockfd)
+        {
+            printf("Failed to create socket associated with server %s.\n", servers[i][0]);
+            continue;
+        }
+
+        // make actual connections
+        socklen_t addrlen = sizeof(struct sockaddr);
+        int rc = connect(sockfd, (struct sockaddr *)&server_sa[i], addrlen);
+        if (rc == -1)
+        {
+            perror("Failed to connect to server");
+            continue;
+        }
+
+        // send first two lines of control info
+        send_authentication(sockfd);
+        strcpy(control_line, "get ");
+        strcat(control_line, file);
+        strcat(control_line, " ");
+        strcat(control_line, subfolder);
+        send(sockfd, control_line, CONTROL_BYTES, 0);
+
+        // the subsequent line will include the required parts of the file for optimization purposes
+        strcpy(control_line, "");
+        for (int j = 0; j < NUM_SERVERS; j++)
+        {
+            if (needed_parts[j])
+            {
+                char part_needed[10];
+                sprintf(part_needed, "%d ", j+1);
+                strcat(control_line, part_needed);
+            }
+        }
+
+        send(sockfd, control_line, CONTROL_BYTES, 0);
+
+        // receive file parts
+        for (int j = 0; j < 2; j++)
+        {
+            // all return info will be preceded by file part number and then # bytes
+            if (error_present(sockfd, i))
+                break;
+            if (!recv_timeout(sockfd, i, control_line, CONTROL_BYTES))
+                break;
+            
+            char *saveptr;
+            char *part = strtok_r(control_line, " ", &saveptr);
+            char *num_bytes_s = strtok_r(0, " ", &saveptr);
+            int part_num = strtol(part, 0, 10);
+            long num_bytes = strtol(num_bytes_s, 0, 10);
+
+            // get file contents
+            tmpfiles[part_num-1] = tmpfile();
+            long num_read = 0;
+            long num_to_read = min(BUFFER_SIZE-1, num_bytes-num_read);
+            while (num_to_read != 0 && (nbytes = recv_timeout(sockfd, i, buffer, num_to_read)) > 0)
+            {
+                size_t nwritten = fwrite(buffer, 1, nbytes, tmpfiles[part_num-1]);
+                if (nbytes != nwritten || nbytes != num_to_read)
+                {
+                    printf("Incorrect number of bytes read or written.\n");
+
+                }
+                num_read += nbytes;
+                num_to_read = min(BUFFER_SIZE-1, num_bytes-num_read);
+            }
+            if (num_read != num_bytes)
+            {
+                printf("Did not read correct number of bytes.\n");
+            }
+            else
+            {
+                needed_parts[part_num-1] = 0;
+            }
+            rewind(tmpfiles[part_num-1]);
+        }
+
+        close(sockfd);
+
+        // check if has all file parts
+        has_all = 1;
+        for (int j = 0; j < NUM_SERVERS; j++)
+        {
+            if (needed_parts[j] == 1)
+                has_all = 0;
+        }
+        if (has_all)
+            break;
+    }
+
+     // check if has all file parts
+    if (!has_all)
+    {
+        printf("File is incomplete or does not exist.\n");
+    }
+    else
+    {
+        // construct file from parts
+        FILE *fp = fopen(file, "w");
+        for (int i = 0; i < NUM_SERVERS; i++)
+        {
+            while ((nbytes = fread(buffer, 1, BUFFER_SIZE-1, tmpfiles[i])) > 0)
+            {
+                fwrite(buffer, 1, nbytes, fp);
+            }
+        }
+        fclose(fp);
+
+        printf("Successfully retrieved file from servers.\n");
+
+        // close temp files
+        for (int i = 0; i < NUM_SERVERS; i++)
+        {
+            fclose(tmpfiles[i]);
+        } 
+    }
+}
+
+void issue_mkdir(char *dirname)
+{
+    char control_line[CONTROL_BYTES];
+    for (int i = 0; i < NUM_SERVERS; i++)
+    {
+        // create socket associated with this server
+        int sockfd = socket(PF_INET, SOCK_STREAM, 0);
+        if (!sockfd)
+        {
+            printf("Failed to create socket associated with server %s.\n", servers[i][0]);
+            return;
+        }
+
+        // make actual connections
+        socklen_t addrlen = sizeof(struct sockaddr);
+        int rc = connect(sockfd, (struct sockaddr *)&server_sa[i], addrlen);
+        if (rc == -1)
+        {
+            perror("Failed to connect to server");
+            printf("Server %s failed to connect. Will create directory when one or more servers is down.\n", servers[i][0]);
+            return;
+        }
+
+        // send first two lines of control info
+        send_authentication(sockfd);
+        strcpy(control_line, "mkdir ");
+        strcat(control_line, dirname);
+        send(sockfd, control_line, CONTROL_BYTES, 0);
+
+        if (error_present(sockfd, i))
+        {
+            printf("Cannot MKDIR when one or more servers fail.\n");
+            return;
+        }
+
+        close(sockfd);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    bzero(username, MAX_USER_CHARS);
+    bzero(password, MAX_USER_CHARS);
+
+    if (argc != 2) {
+        printf("Usage: dfc <conf_file>\n");
+        exit(1);
+    }
+
+    char *conf_file = argv[1];
+
+    // read conf file in order to obtain acceptable username/password combos
+    int server_cnt = 0;
+    char *line = 0;
+    FILE *fp = fopen(conf_file, "r");
+    if (!fp)
+    {
+        printf("Unable to open '%s'.\n", conf_file);
+      
